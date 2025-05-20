@@ -212,32 +212,7 @@ namespace Quartz.Spi.CosmosDbJobStore
             CancellationToken cancellationToken = new CancellationToken())
         {           
             _schedulerSignaler = signaler;
-
-            var documentClient = new CosmosClient(Endpoint, Key, new CosmosClientOptions
-            {
-                Serializer = new QuartzCosmosSerializer(),
-                RequestTimeout = RequestTimeout,
-                ConnectionMode = ConnectionMode,
-                MaxTcpConnectionsPerEndpoint = ConnectionMode == ConnectionMode.Direct ? MaxConnectionLimit : null,
-                MaxRetryWaitTimeOnRateLimitedRequests = MaxRetryWaitTimeInSeconds,
-                MaxRetryAttemptsOnRateLimitedRequests = MaxRetryAttemptsOnThrottledRequests
-            });
-            
-            var databaseResponse = await documentClient.CreateDatabaseIfNotExistsAsync(DatabaseId, cancellationToken: cancellationToken);
-            
-            var containerResponse = await databaseResponse.Database.CreateContainerIfNotExistsAsync(
-                new ContainerProperties(CollectionId, PartitionPerEntityType ? "/type" : "/instanceName")
-                {
-                    DefaultTimeToLive = -1,
-                    IndexingPolicy =
-                    {
-                        IndexingMode = IndexingMode.Consistent,
-                        IncludedPaths = {new IncludedPath { Path = "/*"}}
-                    }
-                }, cancellationToken: cancellationToken);
-
-            var container = containerResponse.Container;
-
+            var container = await InitializeContainer(cancellationToken);
             _lockManager = new LockManager(new LockRepository(container, InstanceName, PartitionPerEntityType), InstanceName, InstanceId, LockTtlSeconds);
             _calendarRepository = new CalendarRepository(container, InstanceName, PartitionPerEntityType);
             _triggerRepository = new TriggerRepository(container, InstanceName, PartitionPerEntityType);
@@ -1813,6 +1788,32 @@ namespace Quartz.Spi.CosmosDbJobStore
                 LastCheckin = DateTimeOffset.UtcNow;
                 throw new JobPersistenceException($"Failure identifying failed instances when checking-in: {e.Message}", e);
             }
+        }
+
+        protected virtual async Task<Container> InitializeContainer(CancellationToken cancellationToken = default)
+        {
+            var documentClient = new CosmosClient(Endpoint, Key, new CosmosClientOptions
+            {
+                Serializer = new QuartzCosmosSerializer(),
+                RequestTimeout = RequestTimeout,
+                ConnectionMode = ConnectionMode,
+                MaxTcpConnectionsPerEndpoint = ConnectionMode == ConnectionMode.Direct ? MaxConnectionLimit : null,
+                MaxRetryWaitTimeOnRateLimitedRequests = MaxRetryWaitTimeInSeconds,
+                MaxRetryAttemptsOnRateLimitedRequests = MaxRetryAttemptsOnThrottledRequests
+            });
+            var databaseResponse = await documentClient.CreateDatabaseIfNotExistsAsync(DatabaseId, cancellationToken: cancellationToken);
+            var containerResponse = await databaseResponse.Database.CreateContainerIfNotExistsAsync(
+                new ContainerProperties(CollectionId, PartitionPerEntityType ? "/type" : "/instanceName")
+                {
+                    DefaultTimeToLive = -1,
+                    IndexingPolicy =
+                    {
+                        IndexingMode = IndexingMode.Consistent,
+                        IncludedPaths = {new IncludedPath { Path = "/*"}}
+                    }
+                }, cancellationToken: cancellationToken);
+
+            return containerResponse.Container;
         }
 
         /// <summary>
